@@ -1,4 +1,4 @@
-code adc16_dma.c
+cat << 'EOF' > adc16_dma.c
 // SPDX-License-Identifier: GPL-2.0
 /*
  * adc16_dma.c - Linux Character + DMA Driver for 16-bit 4-Channel High-Speed ADC
@@ -78,7 +78,6 @@ static void adc_dma_complete_cb(void *param)
 
     next_head = (adc->head + ADC_SAMPLE_BYTES) & (adc->buf_size - 1);
     if (next_head == adc->tail) {
-        /* Buffer full: flag overrun and drop oldest/newest boundary */
         adc->overflow = true;
     } else {
         adc->head = next_head;
@@ -86,7 +85,6 @@ static void adc_dma_complete_cb(void *param)
 
     spin_unlock_irqrestore(&adc->lock, flags);
 
-    /* Wake up any sleeping read() or poll() callers */
     wake_up_interruptible(&adc->read_queue);
 }
 
@@ -102,7 +100,6 @@ static irqreturn_t adc_drdy_isr(int irq, void *dev_id)
 
     dst_addr = adc->dma_handle + adc->head;
 
-    /* Prepare single-frame DMA transfer from SPI RX FIFO to coherent ring */
     desc = dmaengine_prep_slave_single(adc->rx_dma, dst_addr,
                                        ADC_SAMPLE_BYTES,
                                        DMA_DEV_TO_MEM,
@@ -138,7 +135,6 @@ static ssize_t adc_read(struct file *filp, char __user *buf,
     if (count < ADC_SAMPLE_BYTES)
         return -EINVAL;
 
-    /* Block until samples arrive unless O_NONBLOCK is set */
     if (adc_ring_available(adc) == 0) {
         if (filp->f_flags & O_NONBLOCK)
             return -EAGAIN;
@@ -158,7 +154,6 @@ static ssize_t adc_read(struct file *filp, char __user *buf,
 
     avail = adc_ring_available(adc);
     chunk = min(count, avail);
-    /* Clamp to end of physical ring before wrap-around */
     chunk = min(chunk, adc->buf_size - adc->tail);
     spin_unlock_irqrestore(&adc->lock, flags);
 
@@ -187,7 +182,6 @@ static __poll_t adc_poll(struct file *filp, poll_table *wait)
     return mask;
 }
 
-/* Zero-copy mapping of coherent DMA buffer into user space */
 static int adc_mmap(struct file *filp, struct vm_area_struct *vma)
 {
     struct adc_dev *adc = filp->private_data;
@@ -196,7 +190,6 @@ static int adc_mmap(struct file *filp, struct vm_area_struct *vma)
     if (req_size > adc->buf_size)
         return -EINVAL;
 
-    /* Enforce read-only mapping so user space cannot corrupt DMA memory */
     if (vma->vm_flags & VM_WRITE)
         return -EPERM;
 
@@ -266,7 +259,6 @@ static int adc_spi_probe(struct spi_device *spi)
     init_waitqueue_head(&adc->read_queue);
     spi_set_drvdata(spi, adc);
 
-    /* Configure 64-bit DMA mask and allocate coherent ring buffer */
     ret = dma_set_mask_and_coherent(&spi->dev, DMA_BIT_MASK(64));
     if (ret)
         return ret;
@@ -276,14 +268,12 @@ static int adc_spi_probe(struct spi_device *spi)
     if (!adc->dma_buf)
         return -ENOMEM;
 
-    /* Request RX DMA channel from Device Tree ("dmas" property) */
     adc->rx_dma = dma_request_chan(&spi->dev, "rx");
     if (IS_ERR(adc->rx_dma)) {
         ret = PTR_ERR(adc->rx_dma);
         goto err_free_dma;
     }
 
-    /* Request DRDY GPIO & bind falling-edge IRQ (disabled until START ioctl) */
     adc->drdy_gpio = devm_gpiod_get(&spi->dev, "drdy", GPIOD_IN);
     if (IS_ERR(adc->drdy_gpio)) {
         ret = PTR_ERR(adc->drdy_gpio);
@@ -297,7 +287,6 @@ static int adc_spi_probe(struct spi_device *spi)
     if (ret)
         goto err_release_chan;
 
-    /* Register character device node (/dev/adc0) */
     adc->devt = MKDEV(MAJOR(adc_base_devt), 0);
     cdev_init(&adc->cdev, &adc_fops);
     adc->cdev.owner = THIS_MODULE;
@@ -349,3 +338,38 @@ static struct spi_driver adc_spi_driver = {
         .name           = DRIVER_NAME,
         .of_match_table = adc_of_match,
     },
+    .probe  = adc_spi_probe,
+    .remove = adc_spi_remove,
+};
+
+static int __init adc_module_init(void)
+{
+    int ret = alloc_chrdev_region(&adc_base_devt, 0, 1, DRIVER_NAME);
+    if (ret)
+        return ret;
+
+    adc_class = class_create(DRIVER_NAME);
+    if (IS_ERR(adc_class)) {
+        unregister_chrdev_region(adc_base_devt, 1);
+        return PTR_ERR(adc_class);
+    }
+
+    return spi_register_driver(&adc_spi_driver);
+}
+
+static void __exit adc_module_exit(void)
+{
+    spi_unregister_driver(&adc_spi_driver);
+    class_destroy(adc_class);
+    unregister_chrdev_region(adc_base_devt, 1);
+}
+
+module_init(adc_module_init);
+module_exit(adc_module_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Naman Bansal (2025NS01191)");
+MODULE_DESCRIPTION("High-Speed 16-bit SPI/DMA ADC Character Driver");
+EOF
+rm -f build.log
+make -C /lib/modules/$(ls /lib/modules | head -n 1)/build M=$(pwd) modules
