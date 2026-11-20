@@ -1,4 +1,3 @@
-cat << 'EOF' > adc16_dma.c
 // SPDX-License-Identifier: GPL-2.0
 /*
  * adc16_dma.c - Linux Character + DMA Driver for 16-bit 4-Channel High-Speed ADC
