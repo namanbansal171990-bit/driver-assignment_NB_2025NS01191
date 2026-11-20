@@ -370,6 +370,3 @@ module_exit(adc_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Naman Bansal (2025NS01191)");
 MODULE_DESCRIPTION("High-Speed 16-bit SPI/DMA ADC Character Driver");
-EOF
-rm -f build.log
-make -C /lib/modules/$(ls /lib/modules | head -n 1)/build M=$(pwd) modules
